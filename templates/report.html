@@ -1,0 +1,193 @@
+{% extends "base.html" %}
+{% block title %}Loan Report — Library Lending{% endblock %}
+
+{% block content %}
+<h2>Loan Report</h2>
+<hr>
+
+<!--
+  ═══════════════════════════════════════════════════════════════════════════
+  FILTER FORM
+  Uses GET so filters are reflected in the URL (bookmarkable, shareable).
+  All controls are optional and combinable.
+  Genre and Member dropdowns are populated dynamically from the database
+  (S2-J, S2-K) — see the `report` route in app.py.
+  ═══════════════════════════════════════════════════════════════════════════
+-->
+<form method="GET" action="{{ url_for('report') }}" class="mb-4">
+  <div class="row g-3 align-items-end">
+
+    <!-- Loan date: from -->
+    <div class="col-sm-6 col-md-2">
+      <label for="date_from" class="form-label fw-semibold">Loan Date From</label>
+      <input type="date" name="date_from" id="date_from" class="form-control"
+             value="{{ date_from_str }}">
+    </div>
+
+    <!-- Loan date: to -->
+    <div class="col-sm-6 col-md-2">
+      <label for="date_to" class="form-label fw-semibold">Loan Date To</label>
+      <input type="date" name="date_to" id="date_to" class="form-control"
+             value="{{ date_to_str }}">
+    </div>
+
+    <!--
+      Genre dropdown — built from:
+        SELECT DISTINCT genre FROM books ORDER BY genre
+      Implemented in `report` route via db.session.query(Book.genre).distinct()
+    -->
+    <div class="col-sm-6 col-md-2">
+      <label for="genre" class="form-label fw-semibold">Genre</label>
+      <select name="genre" id="genre" class="form-select">
+        <option value="">All Genres</option>
+        {% for g in genres %}
+          <option value="{{ g }}" {% if g == sel_genre %}selected{% endif %}>
+            {{ g }}
+          </option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <!--
+      Member dropdown — built from:
+        SELECT member_id, name FROM members ORDER BY name
+      Implemented in `report` route via Member.query.order_by(Member.name).all()
+    -->
+    <div class="col-sm-6 col-md-2">
+      <label for="member_id" class="form-label fw-semibold">Member</label>
+      <select name="member_id" id="member_id" class="form-select">
+        <option value="">All Members</option>
+        {% for m in members %}
+          <option value="{{ m.member_id }}"
+            {% if m.member_id == sel_member_id %}selected{% endif %}>
+            {{ m.name }}
+          </option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <!--
+      Status filter — hard-coded as a structural enum.
+      Values are All / Active / Returned / Overdue.
+      Status is not stored in the database; it is derived from return_date
+      and due_date, so these options are fixed by definition.
+    -->
+    <div class="col-sm-6 col-md-2">
+      <label for="status" class="form-label fw-semibold">Status</label>
+      <select name="status" id="status" class="form-select">
+        <option value="all"      {% if sel_status == "all"      %}selected{% endif %}>All</option>
+        <option value="active"   {% if sel_status == "active"   %}selected{% endif %}>Active</option>
+        <option value="returned" {% if sel_status == "returned" %}selected{% endif %}>Returned</option>
+        <option value="overdue"  {% if sel_status == "overdue"  %}selected{% endif %}>Overdue</option>
+      </select>
+    </div>
+
+    <!-- Buttons -->
+    <div class="col-sm-6 col-md-2">
+      <button type="submit" class="btn btn-primary w-100">Apply Filters</button>
+    </div>
+
+  </div>
+
+  <!-- Clear all filters in one click -->
+  <div class="mt-2">
+    <a href="{{ url_for('report') }}" class="btn btn-sm btn-outline-secondary">Clear Filters</a>
+  </div>
+</form>
+
+<!--
+  ═══════════════════════════════════════════════════════════════════════════
+  STATISTICS  (S2-G)
+  Computed in the `report` route over the filtered result set.
+  ═══════════════════════════════════════════════════════════════════════════
+-->
+<div class="row g-3 mb-4">
+  <div class="col-6 col-md-2">
+    <div class="card text-center border-secondary">
+      <div class="card-body py-2">
+        <div class="fs-4 fw-bold">{{ stats.total }}</div>
+        <div class="text-muted small">Total</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-md-2">
+    <div class="card text-center border-primary">
+      <div class="card-body py-2">
+        <div class="fs-4 fw-bold text-primary">{{ stats.active }}</div>
+        <div class="text-muted small">Active</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-md-2">
+    <div class="card text-center border-success">
+      <div class="card-body py-2">
+        <div class="fs-4 fw-bold text-success">{{ stats.returned }}</div>
+        <div class="text-muted small">Returned</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-md-2">
+    <div class="card text-center border-danger">
+      <div class="card-body py-2">
+        <div class="fs-4 fw-bold text-danger">{{ stats.overdue }}</div>
+        <div class="text-muted small">Overdue</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-md-2">
+    <div class="card text-center border-dark">
+      <div class="card-body py-2">
+        <div class="fs-4 fw-bold">{{ stats.return_rate }}%</div>
+        <div class="text-muted small">Return Rate</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!--
+  ═══════════════════════════════════════════════════════════════════════════
+  RESULTS TABLE  (S2-G)
+  ═══════════════════════════════════════════════════════════════════════════
+-->
+{% if loans %}
+<table class="table table-bordered table-hover align-middle">
+  <thead class="table-dark">
+    <tr>
+      <th>#</th>
+      <th>Member</th>
+      <th>Book</th>
+      <th>Genre</th>
+      <th>Loan Date</th>
+      <th>Due Date</th>
+      <th>Return Date</th>
+      <th>Status</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for loan in loans %}
+    <tr>
+      <td>{{ loan.loan_id }}</td>
+      <td>{{ loan.member.name }}</td>
+      <td>{{ loan.book.title }}</td>
+      <td>{{ loan.book.genre }}</td>
+      <td>{{ loan.loan_date }}</td>
+      <td>{{ loan.due_date }}</td>
+      <td>{{ loan.return_date if loan.return_date else "—" }}</td>
+      <td>
+        {% if loan.status == "returned" %}
+          <span class="badge bg-success">Returned</span>
+        {% elif loan.status == "overdue" %}
+          <span class="badge bg-danger">Overdue</span>
+        {% else %}
+          <span class="badge bg-primary">Active</span>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="alert alert-info">No loans match the selected filters.</div>
+{% endif %}
+
+{% endblock %}
