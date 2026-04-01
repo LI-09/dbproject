@@ -202,10 +202,3 @@ This project was developed with AI assistance (Cursor / Claude).
 - **Tasks AI assisted with:** Code scaffolding for Flask routes and Jinja
   templates, SQLAlchemy query patterns, Bootstrap layout, and seed data
   generation.
-- **How output was verified:** All generated code was read line-by-line,
-  tested against the assignment rubric, and modified to match the exact
-  Stage 2 requirements. The database design decisions (no status column,
-  no genre table, Loans as main table) were made by the student based on
-  the design review documented in the project history.
-- The student is responsible for understanding and explaining all code
-  in the recorded demo.
