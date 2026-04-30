@@ -26,9 +26,14 @@ class Book(db.Model):
     __tablename__ = "books"
 
     book_id = db.Column(db.Integer, primary_key=True)
-    title   = db.Column(db.Text, nullable=False)
+    # index=True → ix_books_title: supports ORDER BY books.title in _load_form_choices(),
+    # which runs on every Add Loan and Edit Loan page load to build the book dropdown.
+    title   = db.Column(db.Text, nullable=False, index=True)
     author  = db.Column(db.Text, nullable=False)
-    genre   = db.Column(db.Text, nullable=False)
+    # index=True → ix_books_genre: supports (1) SELECT DISTINCT genre FROM books ORDER BY genre
+    # that populates the genre dropdown on every Report page load, and (2) the WHERE books.genre = ?
+    # filter in the Report filtered query.
+    genre   = db.Column(db.Text, nullable=False, index=True)
     isbn    = db.Column(db.Text)
 
     # One book can appear in many loans.
@@ -42,7 +47,10 @@ class Member(db.Model):
     __tablename__ = "members"
 
     member_id = db.Column(db.Integer, primary_key=True)
-    name      = db.Column(db.Text, nullable=False)
+    # index=True → ix_members_name: supports ORDER BY members.name in both
+    # _load_form_choices() (every Add/Edit Loan form) and the Report member dropdown —
+    # the most frequently executed query in the app.
+    name      = db.Column(db.Text, nullable=False, index=True)
     email     = db.Column(db.Text, nullable=False)
     phone     = db.Column(db.Text)
 
@@ -64,9 +72,18 @@ class Loan(db.Model):
     __tablename__ = "loans"
 
     loan_id     = db.Column(db.Integer, primary_key=True)
-    book_id     = db.Column(db.Integer, db.ForeignKey("books.book_id"),   nullable=False)
-    member_id   = db.Column(db.Integer, db.ForeignKey("members.member_id"), nullable=False)
-    loan_date   = db.Column(db.Date,    nullable=False)
+    # index=True → ix_loans_book_id: SQLite does NOT auto-index FK columns.
+    # This index supports the JOIN loans→books in the Main Loan Listing (GET /)
+    # and in the Report filtered query (GET /report).
+    book_id     = db.Column(db.Integer, db.ForeignKey("books.book_id"),     nullable=False, index=True)
+    # index=True → ix_loans_member_id: supports (1) the JOIN loans→members in the Main
+    # Loan Listing and Report, and (2) WHERE loans.member_id = ? when the user applies
+    # the member filter in the Report.
+    member_id   = db.Column(db.Integer, db.ForeignKey("members.member_id"), nullable=False, index=True)
+    # index=True → ix_loans_loan_date: supports (1) ORDER BY loans.loan_date DESC in both
+    # the Main Loan Listing and the Report (eliminates a full-table sort), and (2) the
+    # WHERE loans.loan_date >= ? / <= ? date-range filter in the Report.
+    loan_date   = db.Column(db.Date,    nullable=False, index=True)
     due_date    = db.Column(db.Date,    nullable=False)
     return_date = db.Column(db.Date,    nullable=True)   # NULL = not yet returned
 

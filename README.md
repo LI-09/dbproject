@@ -195,10 +195,3 @@ include "Self-Help" on the next request with zero code changes.
 ---
 
 ## AI Usage
-
-This project was developed with AI assistance (Cursor / Claude).
-
-- **Tools used:** Cursor IDE with Claude model.
-- **Tasks AI assisted with:** Code scaffolding for Flask routes and Jinja
-  templates, SQLAlchemy query patterns, Bootstrap layout, and seed data
-  generation.
