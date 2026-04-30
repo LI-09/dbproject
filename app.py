@@ -14,6 +14,12 @@ app = Flask(__name__)
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 app.config["SQLALCHEMY_DATABASE_URI"] = f"sqlite:///{os.path.join(BASE_DIR, 'library.db')}"
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+# SERIALIZABLE isolation: every transaction sees a fully consistent snapshot.
+# Prevents dirty reads, non-repeatable reads, and phantom reads.
+# In SQLite this is enforced via exclusive file-level locking — only one writer
+# at a time — which is the right choice for a library system where two staff
+# members could otherwise check out the same book concurrently.
+app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {"isolation_level": "SERIALIZABLE"}
 app.secret_key = "cs348-library"   # needed for flash messages (used in later steps)
 
 db = SQLAlchemy(app)
@@ -156,10 +162,18 @@ def loan_add():
 
         new_loan = Loan(book_id=book_id, member_id=member_id,
                         loan_date=loan_date, due_date=due_date)
-        db.session.add(new_loan)
-        db.session.commit()
-        flash("Loan added successfully.", "success")
-        return redirect(url_for("index"))
+        # Explicit transaction: either the INSERT commits in full or the
+        # rollback undoes it entirely — no partial write is ever persisted.
+        try:
+            db.session.add(new_loan)
+            db.session.commit()
+            flash("Loan added successfully.", "success")
+            return redirect(url_for("index"))
+        except Exception:
+            db.session.rollback()
+            flash("A database error occurred. The loan was not saved.", "danger")
+            return render_template("loan_form.html", loan=None,
+                                   books=books, members=members)
 
     # Sensible defaults: loan starts today, due in 14 days.
     today = date.today()
@@ -201,9 +215,17 @@ def loan_edit(loan_id):
         loan.return_date = (date.fromisoformat(return_date_str)
                             if return_date_str else None)
 
-        db.session.commit()
-        flash(f"Loan #{loan_id} updated successfully.", "success")
-        return redirect(url_for("index"))
+        # Explicit transaction: all field updates commit atomically, or the
+        # rollback restores the row to its previous state on any error.
+        try:
+            db.session.commit()
+            flash(f"Loan #{loan_id} updated successfully.", "success")
+            return redirect(url_for("index"))
+        except Exception:
+            db.session.rollback()
+            flash("A database error occurred. No changes were saved.", "danger")
+            return render_template("loan_form.html", loan=loan,
+                                   books=books, members=members)
 
     return render_template("loan_form.html", loan=loan,
                            books=books, members=members)
@@ -212,9 +234,57 @@ def loan_edit(loan_id):
 @app.route("/loans/<int:loan_id>/delete", methods=["POST"])
 def loan_delete(loan_id):
     loan = db.get_or_404(Loan, loan_id)
-    db.session.delete(loan)
-    db.session.commit()
-    flash(f"Loan #{loan_id} deleted.", "success")
+    # Explicit transaction: the DELETE is atomic — if the commit fails for any
+    # reason, rollback ensures the row is never partially removed.
+    try:
+        db.session.delete(loan)
+        db.session.commit()
+        flash(f"Loan #{loan_id} deleted.", "success")
+    except Exception:
+        db.session.rollback()
+        flash("A database error occurred. The loan was not deleted.", "danger")
+    return redirect(url_for("index"))
+
+
+# ---------------------------------------------------------------------------
+# Bulk return — demonstrates multi-row atomic transaction (Stage 3)
+# ---------------------------------------------------------------------------
+
+@app.route("/loans/return-overdue", methods=["POST"])
+def bulk_return_overdue():
+    """
+    Mark every overdue loan as returned today in a single transaction.
+
+    This is the clearest demonstration of why transactions matter:
+    there may be N overdue loans to update.  Without a transaction, a
+    crash or error after the k-th UPDATE would leave the database in a
+    partially-updated state — some loans returned, others still overdue.
+    The try/except/rollback block guarantees atomicity: either ALL rows
+    are updated and committed, or NONE are (rollback restores every row).
+
+    Isolation level (SERIALIZABLE, set globally on the engine):
+    If two staff members clicked this button simultaneously, the second
+    request would wait for the first transaction to release its lock.
+    It would then find zero overdue loans remaining — rather than both
+    transactions updating the same rows concurrently and producing
+    duplicate or conflicting writes.
+    """
+    try:
+        overdue_loans = Loan.query.filter(
+            Loan.return_date == None,       # noqa: E711  — SQLAlchemy requires == None
+            Loan.due_date < date.today()
+        ).all()
+
+        count = len(overdue_loans)
+        for loan in overdue_loans:
+            loan.return_date = date.today()
+
+        db.session.commit()   # single commit — all N updates are atomic
+        flash(f"Marked {count} overdue loan(s) as returned today.", "success")
+    except Exception:
+        db.session.rollback()  # undo every partial update if anything failed
+        flash("A database error occurred. No loans were changed.", "danger")
+
     return redirect(url_for("index"))
 
 

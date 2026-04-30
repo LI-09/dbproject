@@ -4,8 +4,18 @@
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
   <h2>All Loans</h2>
-  <!-- Link wired up in Step 4 (Add Loan route) -->
-  <a href="{{ url_for('loan_add') }}" class="btn btn-primary">+ New Loan</a>
+  <div class="d-flex gap-2">
+    <a href="{{ url_for('loan_add') }}" class="btn btn-primary">+ New Loan</a>
+    {% set overdue_count = loans | selectattr("status", "equalto", "overdue") | list | length %}
+    {% if overdue_count > 0 %}
+    <form method="POST" action="{{ url_for('bulk_return_overdue') }}"
+          onsubmit="return confirm('Mark all {{ overdue_count }} overdue loan(s) as returned today?');">
+      <button type="submit" class="btn btn-warning">
+        Return All Overdue ({{ overdue_count }})
+      </button>
+    </form>
+    {% endif %}
+  </div>
 </div>
 
 {% if loans %}
