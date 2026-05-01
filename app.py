@@ -14,6 +14,37 @@ app = Flask(__name__)
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 app.config["SQLALCHEMY_DATABASE_URI"] = f"sqlite:///{os.path.join(BASE_DIR, 'library.db')}"
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+# ---------------------------------------------------------------------------
+# SQL Injection Protection (Stage 3 — S3-A)
+#
+# This application uses the SQLAlchemy ORM exclusively for every database
+# operation.  The ORM never concatenates user input into SQL strings.
+# Instead it compiles every query with '?' bind-parameter placeholders and
+# passes the user-supplied values separately to the database driver — the
+# definition of a prepared statement.
+#
+# Two independent layers protect every user-supplied value:
+#
+#   Layer 1 — Input type validation (before the value reaches SQLAlchemy):
+#     • request.form.get("book_id",   type=int)  → non-integers become None
+#     • request.form.get("member_id", type=int)  → same
+#     • request.args.get("member_id", type=int)  → same (report filter)
+#     • date.fromisoformat(string)               → raises ValueError for any
+#       value that is not a valid ISO-8601 date, so injection strings never
+#       reach the ORM at all.
+#     • <int:loan_id> in route definitions       → Flask rejects non-integers
+#       at routing time, before the route function even executes.
+#
+#   Layer 2 — ORM parameterization (the prepared-statement guarantee):
+#     Every .filter(), .add(), .delete(), and .commit() call emits SQL of
+#     the form  WHERE col = ?  with the value bound separately.  No user
+#     input is ever interpolated into the SQL string.
+#
+# SQLALCHEMY_ECHO prints each SQL statement + bound parameters to the
+# console.  During the demo this proves live that inputs are bound as '?'
+# parameters, never embedded in the SQL text.
+# ---------------------------------------------------------------------------
+app.config["SQLALCHEMY_ECHO"] = True
 # SERIALIZABLE isolation: every transaction sees a fully consistent snapshot.
 # Prevents dirty reads, non-repeatable reads, and phantom reads.
 # In SQLite this is enforced via exclusive file-level locking — only one writer
@@ -142,6 +173,10 @@ def loan_add():
     books, members = _load_form_choices()
 
     if request.method == "POST":
+        # SQL-injection Layer 1 — type=int rejects any non-integer value
+        # (including strings like "1; DROP TABLE loans") before it reaches
+        # the ORM.  A malicious string makes request.form.get() return None,
+        # which is caught by the "all fields required" check below.
         book_id        = request.form.get("book_id",   type=int)
         member_id      = request.form.get("member_id", type=int)
         loan_date_str  = request.form.get("loan_date")
@@ -152,6 +187,9 @@ def loan_add():
             return render_template("loan_form.html", loan=None,
                                    books=books, members=members)
 
+        # SQL-injection Layer 1 (continued) — date.fromisoformat() raises
+        # ValueError for any value that is not a valid ISO-8601 date string,
+        # so injection payloads in date fields never reach the ORM.
         loan_date = date.fromisoformat(loan_date_str)
         due_date  = date.fromisoformat(due_date_str)
 
@@ -305,6 +343,12 @@ def report():
     members = Member.query.order_by(Member.name).all()
 
     # ── Read filter parameters from URL query string ──────────────────────
+    # SQL-injection note — Layer 1 input validation:
+    #   sel_member_id: type=int silently returns None for any non-integer
+    #   value (including injection strings like "1 OR 1=1"), so it never
+    #   reaches the ORM.
+    #   date strings: passed through date.fromisoformat() below, which
+    #   raises ValueError for anything that is not a valid ISO date.
     date_from_str = request.args.get("date_from") or None
     date_to_str   = request.args.get("date_to")   or None
     sel_genre     = request.args.get("genre")      or None
@@ -312,7 +356,21 @@ def report():
     sel_status    = request.args.get("status")     or "all"
 
     # ── Build the filtered query (S2-F, S2-I) ────────────────────────────
-    # Start with all loans, joined to Book and Member for access to their fields.
+    # SQL-injection note — Layer 2 ORM parameterization:
+    # Every .filter() call below compiles to a '?' bind-parameter query.
+    # Examples of the actual SQL SQLAlchemy emits (visible in the console
+    # when SQLALCHEMY_ECHO = True):
+    #
+    #   .filter(Book.genre == sel_genre)
+    #     → WHERE books.genre = ?   params: ('Mystery',)
+    #
+    #   .filter(Loan.loan_date >= ...)
+    #     → WHERE loans.loan_date >= ?   params: ('2024-01-01',)
+    #
+    #   .filter(Loan.member_id == sel_member_id)
+    #     → WHERE loans.member_id = ?   params: (2,)
+    #
+    # User input is NEVER interpolated into the SQL string itself.
     q = Loan.query.join(Book).join(Member).order_by(Loan.loan_date.desc())
 
     if date_from_str:
